@@ -30,7 +30,7 @@ def recv_all(conn, length):
 
 class Server:
     def __init__(self, model_path=None, host="localhost", port=10086,
-                 max_batch_size=16, batch_wait_ms=10, max_queue_size=256,
+                 max_batch_size=16, batch_wait_ms=20, max_queue_size=256,
                  max_clients=128, request_timeout=300, policy=None, metrics_jsonl=None):
         if min(max_batch_size, max_queue_size, max_clients) < 1 or batch_wait_ms < 0 or request_timeout <= 0:
             raise ValueError("Invalid server limits")
@@ -215,7 +215,7 @@ def parse_args():
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=10086)
     parser.add_argument("--max-batch-size", type=int, default=16)
-    parser.add_argument("--batch-wait-ms", type=float, default=10)
+    parser.add_argument("--batch-wait-ms", type=float, default=20)
     parser.add_argument("--max-queue-size", type=int, default=256)
     parser.add_argument("--max-clients", type=int, default=128)
     parser.add_argument("--request-timeout", type=float, default=300)

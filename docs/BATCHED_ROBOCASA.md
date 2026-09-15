@@ -53,8 +53,8 @@ Eight EGL environments worked. Reducing only the inference batch size cannot
 free renderer memory: reduce the number of EGL workers or use CPU rendering.
 
 CPU rendering uses substantial host RAM. The 32-environment run had a sampled
-container memory usage of about **226 GiB**; its enforced memory limit was
-**342 GiB**. For recreation, provision at least 256 GiB and check the actual
+container memory usage of about **261 GiB** in the longer tuning runs; its enforced memory limit was
+**342 GiB**. For recreation, provision at least 300 GiB and check the actual
 container limit. Memory use depends on kitchen/task assets; monitor it when
 changing tasks or concurrency.
 
@@ -85,12 +85,43 @@ Batch 32 peaked at 13.05 GiB of PyTorch allocations. The new singleton sampler
 matched the original checkpoint output exactly in the test; mixed-length batch
 comparisons differed by at most 0.0391 in normalized actions (BF16 rounding).
 
+## Batch-window tuning (2026-09-15)
+
+With 32 independent OSMesa environments and maximum batch 16, **20 ms** was
+fastest in both repeats. Pooled steady-state results:
+
+| Wait | Simulation steps/s | Requests/s | Individual runs, steps/s |
+| --- | ---: | ---: | --- |
+| **20 ms** | **176.33** | **17.64** | 174.79, 177.90 |
+| 50 ms | 170.79 | 17.08 | 168.61, 172.97 |
+| 100 ms | 166.62 | 16.67 | 166.91, 166.34 |
+
+Each run used 20 warmup calls plus 160 measured calls per environment, ten
+simulation steps per call, and identical action tapes with exact input hashes.
+There is one initialization barrier; environments run independently afterward.
+Each steady interval lasted 253–295 seconds. These longer measurements supersede
+the short 15.83 requests/s check for selecting a wait window; their timing
+method differs. They are throughput measurements, not success-rate evaluations.
+
+At 20 ms, actual batches averaged 10.68 and the inference worker was busy about
+96% of the interval. At 100 ms, larger batches (13.1–13.9) did not compensate
+for roughly 11% collection time and higher request latency. CPU rendering and
+physics shape request arrival times, but CPU quota was only 51–55% utilized
+without steady-state throttling. Socket and host/device transfer timing was a
+minor fraction of a cycle. Cached real-input batch-16 inference reached
+21.90 requests/s; partial-batch efficiency and inference execution overhead
+explain much of the remaining gap. See the report for evidence and limits.
+
+[Full results, distributions, latency, telemetry, and reproduction instructions](../benchmarks/batch-wait-2026-09-15/REPORT.md).
+Raw data and action tapes are archived beside the report. JSONL profiling is
+optional (`--metrics-jsonl PATH`) and off during normal serving.
+
 ## Batching behavior
 
 - One inference thread owns the model. Multiple client connections enqueue one
   outstanding observation each; results return to their originating connection.
-- Maximum batch defaults to 16. The wait window defaults to 10 ms; the commands
-  above use 20 ms. Partial batches run when the window expires. No environment
+- Maximum batch defaults to 16. The wait window defaults to **20 ms**, selected by the repeated
+  end-to-end experiment below. Partial batches run when the window expires. No environment
   must wait for every other environment to issue a request.
 - Text is left-padded with matching attention masks; flattened camera patches
   and image grids concatenate in request order. Action/state tensors batch on
