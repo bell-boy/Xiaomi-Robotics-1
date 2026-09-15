@@ -49,6 +49,12 @@ hf download XiaomiRobotics/Xiaomi-Robotics-1-RoboCasa --local-dir "$MODEL_PATH"
 
 ---
 
+## Single GPU with 32 parallel environments
+
+See [batched RoboCasa deployment](../docs/BATCHED_ROBOCASA.md) for the shared
+server and episode-sharded launcher. All workers connect to one port; one
+XR-1 instance performs true tensor batching on the GPU.
+
 ## Evaluation
 
 ### Step 1 — Start the inference server

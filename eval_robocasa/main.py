@@ -180,14 +180,14 @@ class EvalClient:
         self.processor = self.client.processor
         logging.info(f"EvalClient ready. Robot types: {self.processor.list_robot_types()}")
 
-    def __call__(self, state, images, instruction, global_rank=0, rollout_i=0, step_i=0):
+    def prepare_request(self, state, images, instruction):
         """
         Args:
             state: numpy array shape (8,) — [7 joint positions, 1 gripper pos]
             images: list of 3 PIL.Image (256x256) — [base1, base2, wrist_left]
             instruction: str — task description
         Returns:
-            numpy array shape (10, 7)
+            dict containing one preprocessed observation
         """
         state_padded = np.zeros(STATE_DIM, dtype=np.float32)
         state_padded[: len(state)] = state
@@ -223,6 +223,10 @@ class EvalClient:
         request_data["task_id"] = ROBOT_TYPE
         request_data["seed"] = 42
 
+        return request_data
+
+    def __call__(self, state, images, instruction, global_rank=0, rollout_i=0, step_i=0):
+        request_data = self.prepare_request(state, images, instruction)
         response = self.client(**request_data)
         action = response[0, :, :ACTION_DIM].float().numpy()
         return action
@@ -242,6 +246,7 @@ class Args:
     server_addr: str = "localhost"
     server_port: int = 10086
     crop_ratio: float = 0.95
+    save_video: bool = True
 
 
 def main(args: Args):
@@ -297,7 +302,7 @@ def main(args: Args):
             for ai in range(action.shape[0]):
                 pad_action[:7] = action[ai]
 
-                if step_i % 5 == 0:
+                if args.save_video and step_i % 5 == 0:
                     rgbs, _, _ = render_obs(env, camera_names, base2world)
                     video_array.append(rgbs.transpose(1, 0, 2, 3).reshape(256, -1, 3))
 
@@ -321,7 +326,8 @@ def main(args: Args):
         video_path = (
             f"{args.save_root_dir}/{env_name}/seed{seed}_{'success' if success else 'failure'}.mp4"
         )
-        imageio.mimsave(video_path, video_array, fps=10)
+        if args.save_video and video_array:
+            imageio.mimsave(video_path, video_array, fps=10)
 
         ep_num = rollout_i + 1
         current_rate = num_success_rollouts / ep_num * 100

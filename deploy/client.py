@@ -16,11 +16,12 @@ torch.set_printoptions(3, sci_mode=False)
 
 
 class Client:
-    def __init__(self, host="localhost", port=10086, model_path=None):
+    def __init__(self, host="localhost", port=10086, model_path=None, timeout=300, max_connect_retries=30):
         self.host = host
         self.port = port
+        self.timeout = timeout
         self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, use_fast=False) if model_path else None
-        self._connect_with_retry(max_retries=None, retry_interval=1)
+        self._connect_with_retry(max_retries=max_connect_retries, retry_interval=1)
         print(f"Client connected to server at {self.host}:{self.port}.")
 
     def _connect_with_retry(self, max_retries=None, retry_interval=1):
@@ -29,9 +30,11 @@ class Client:
         while True:
             try:
                 self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.client_socket.settimeout(self.timeout)
                 self.client_socket.connect((self.host, self.port))
                 return
             except (ConnectionRefusedError, socket.error) as e:
+                self.client_socket.close()
                 retry_count += 1
                 time.sleep(retry_interval)
                 if max_retries is not None and retry_count >= max_retries:
@@ -42,22 +45,27 @@ class Client:
         self.client_socket.sendall(struct.pack(">I", len(serialized)) + serialized)
 
     def _recv_with_length_prefix(self):
-        len_data = self.client_socket.recv(4)
-        if not len_data or len(len_data) < 4:
-            raise ConnectionError("Failed to receive response length prefix.")
+        len_data = self._recv_all(4)
         data_len = struct.unpack(">I", len_data)[0]
+        if not 0 < data_len <= 64 * 1024 * 1024:
+            raise ConnectionError("Invalid response length")
+        return pickle.loads(self._recv_all(data_len))
+
+    def _recv_all(self, data_len):
         data = b""
         while len(data) < data_len:
             packet = self.client_socket.recv(data_len - len(data))
             if not packet:
                 raise ConnectionError("Connection closed while receiving response.")
             data += packet
-        return pickle.loads(data)
+        return data
 
     def __call__(self, **data):
         robot_type = data.get("task_id")
         self._send_with_length_prefix(data)
         actions = self._recv_with_length_prefix()
+        if isinstance(actions, dict) and "error" in actions:
+            raise RuntimeError(f"Inference server: {actions['error']}")
         action = self.processor.decode_action(actions, robot_type=robot_type)
         return action
 
