@@ -5,7 +5,7 @@ export DEBIAN_FRONTEND=noninteractive
 WORKSPACE="${WORKSPACE:-/workspace}"
 MODEL_PATH="${MODEL_PATH:-$WORKSPACE/checkpoints/Xiaomi-Robotics-1-RoboCasa}"
 apt-get update
-apt-get install -y git libegl1 libgl1 libgles2 libosmesa6 libglfw3 ffmpeg tmux
+apt-get install -y git libegl1 libgl1 libgles2 libopengl0 libosmesa6 libglfw3 ffmpeg tmux
 python -m pip install transformers==4.57.1 torchvision==0.23.0 accelerate einops scipy tyro 'imageio[ffmpeg]' pytest
 # The tested Docker image uses Python 3.11 and the PyTorch C++11 ABI.
 python -m pip install 'https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl'

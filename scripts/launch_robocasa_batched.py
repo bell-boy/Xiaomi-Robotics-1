@@ -28,7 +28,8 @@ async def run(args):
     output.mkdir(parents=True, exist_ok=False)
     env = dict(os.environ, OMP_NUM_THREADS='1', MKL_NUM_THREADS='1',
                OPENBLAS_NUM_THREADS='1', TOKENIZERS_PARALLELISM='false',
-               MUJOCO_GL='egl', PYOPENGL_PLATFORM='egl')
+               MUJOCO_GL=args.render_backend, PYOPENGL_PLATFORM=args.render_backend,
+               LP_NUM_THREADS='1')
     (output / 'run.json').write_text(json.dumps(vars(args), indent=2))
 
     async def worker(task, seed, count):
@@ -92,6 +93,7 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--model', required=True)
     p.add_argument('--workers', type=int, default=32)
+    p.add_argument('--render-backend', choices=['egl', 'osmesa'], default='osmesa')
     p.add_argument('--host', default='localhost')
     p.add_argument('--port', type=int, default=10086)
     p.add_argument('--tasks', nargs='+', choices=TASKS, default=TASKS)

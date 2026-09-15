@@ -17,9 +17,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def worker(rank, args, barrier, results):
     os.environ.update(OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
-                      TOKENIZERS_PARALLELISM='false', MUJOCO_GL='egl', PYOPENGL_PLATFORM='egl')
+                      TOKENIZERS_PARALLELISM='false', MUJOCO_GL=args.render_backend,
+                      PYOPENGL_PLATFORM=args.render_backend, LP_NUM_THREADS='1')
     log_path = Path(args.output) / f'worker-{rank}.log'
     env = client = None
+    started = time.monotonic()
     try:
         with log_path.open('w', buffering=1) as log:
             os.dup2(log.fileno(), 1)
@@ -38,23 +40,34 @@ def worker(rank, args, barrier, results):
             base2world[:3, :3] = arm.origin_ori
             base2world[:3, 3] = arm.origin_pos
             client = EvalClient(host=args.host, port=args.port, model_path=args.model)
-            latencies = []
-            for _ in range(args.calls):
+            latencies, render_times, step_times = [], [], []
+            initialized_seconds = time.monotonic() - started
+            active_start = None
+            for call_index in range(args.calls):
+                start = time.monotonic()
                 rgb, state, _ = render_obs(env, camera_names, base2world)
                 images = center_crop_pil(rgbs_to_pil_images(rgb), .95)
                 request = client.prepare_request(state, images, env.get_ep_meta()['lang'])
-                barrier.wait(timeout=args.timeout)
+                render_times.append(time.monotonic() - start)
+                print(f'Worker {rank}: observation prepared', flush=True)
+                if call_index == 0:
+                    barrier.wait(timeout=args.timeout)
+                    active_start = time.monotonic()
                 start = time.monotonic()
                 actions = client.client(**request)[0, :, :7].float().numpy()
                 latencies.append(time.monotonic() - start)
                 if actions.shape != (10, 7) or not np.isfinite(actions).all():
                     raise AssertionError(f'Invalid action: {actions.shape}')
+                start = time.monotonic()
                 for action in actions:
                     padded = np.zeros(env.action_spec[0].shape)
                     padded[:7] = action
                     env.step(padded)
+                step_times.append(time.monotonic() - start)
             results.put(dict(rank=rank, calls=args.calls, steps=args.calls * 10,
-                             response_seconds=latencies))
+                             response_seconds=latencies, render_seconds=render_times,
+                             step_seconds=step_times, initialized_seconds=initialized_seconds,
+                             active_seconds=time.monotonic() - active_start))
     except BaseException:
         error = traceback.format_exc()
         results.put(dict(rank=rank, error=error))
@@ -72,6 +85,7 @@ def main():
     p.add_argument('--workers', type=int, default=32)
     p.add_argument('--calls', type=int, default=2)
     p.add_argument('--task', default='OpenDrawer')
+    p.add_argument('--render-backend', choices=['egl', 'osmesa'], default='osmesa')
     p.add_argument('--host', default='127.0.0.1')
     p.add_argument('--port', type=int, default=10086)
     p.add_argument('--timeout', type=int, default=600)
@@ -105,8 +119,11 @@ def main():
                 if proc.is_alive():
                     proc.kill()
                     proc.join()
-        report = dict(workers=args.workers, elapsed_seconds=time.monotonic() - start,
+        report = dict(workers=args.workers, render_backend=args.render_backend, elapsed_seconds=time.monotonic() - start,
                       results=sorted(rows, key=lambda x: x['rank']))
+        if len(rows) == args.workers and all('active_seconds' in r for r in rows):
+            report['requests_per_second_after_initialization'] = (
+                sum(r['calls'] for r in rows) / max(r['active_seconds'] for r in rows))
         (Path(args.output) / 'smoke.json').write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))
 

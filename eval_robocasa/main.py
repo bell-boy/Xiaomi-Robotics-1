@@ -128,8 +128,14 @@ def render_obs(env, camera_names, base2world, camera_height=256, camera_width=25
     rgbs = np.stack(rgbs, axis=0)
 
     robot = env.robots[0]
-    proprios_direct = robot.get_robot_joint_positions()
-    proprios_gripper = robot.get_gripper_joint_positions("right")[0:1]
+    # RoboSuite 1.5.1 exposes these arrays through indices; newer versions
+    # add getter methods returning the same qpos entries.
+    proprios_direct = (robot.get_robot_joint_positions()
+                       if hasattr(robot, "get_robot_joint_positions")
+                       else robot.sim.data.qpos[robot._ref_joint_pos_indexes])
+    proprios_gripper = (robot.get_gripper_joint_positions("right")
+                        if hasattr(robot, "get_gripper_joint_positions")
+                        else robot.sim.data.qpos[robot._ref_gripper_joint_pos_indexes["right"]])[0:1]
     proprios = np.concatenate([proprios_direct, proprios_gripper], axis=0)
 
     controller = env.robots[0].composite_controller
