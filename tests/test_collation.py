@@ -23,6 +23,22 @@ class TestCollation(unittest.TestCase):
         self.assertTrue(torch.equal(batch['pixel_values'][6:], rows[1]['pixel_values']))
         self.assertEqual(batch['state'][:, 0, 0].tolist(), [0, 1])
 
+    def test_video_history_keeps_camera_and_request_order(self):
+        rows = []
+        for i, length in enumerate([5, 8]):
+            rows.append(dict(input_ids=torch.full((1, length), i + 1),
+                             attention_mask=torch.ones(1, length, dtype=torch.long),
+                             pixel_values_videos=torch.full((12, 4), i),
+                             video_grid_thw=torch.tensor([[2, 2, 2]] * 3),
+                             state=torch.full((1, 4, 60), i),
+                             action_mask=torch.ones(1, 16, 60)))
+        batch = collate(rows, 99)
+        self.assertEqual(tuple(batch['state'].shape), (2, 4, 60))
+        self.assertEqual(tuple(batch['video_grid_thw'].shape), (6, 3))
+        self.assertTrue(torch.equal(batch['pixel_values_videos'][12:], rows[1]['pixel_values_videos']))
+        self.assertEqual(batch['attention_mask'][0].tolist(), [0, 0, 0, 1, 1, 1, 1, 1])
+        self.assertNotIn('pixel_values', batch)
+
     def test_noise_independent_of_batch_order_and_global_rng(self):
         mask = torch.ones(3, 10, 7)
         before = torch.get_rng_state()

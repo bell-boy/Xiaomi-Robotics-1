@@ -7,6 +7,7 @@ import argparse
 import collections
 import json
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -121,6 +122,8 @@ class EvalClient:
         self.processor = self.client.processor
         self.robot_type = robot_type
         self.crop_ratio = crop_ratio
+        self.noise_seed = 0
+        self.request_index = 0
 
         robot_types = self.processor.list_robot_types()
         if robot_type not in robot_types:
@@ -179,6 +182,14 @@ class EvalClient:
         )
         request = dict(inputs)
         request["task_id"] = self.robot_type
+        request["seed"] = self.noise_seed + self.request_index
+        self.request_index += 1
+        capture_dir = os.environ.get("XR1_CAPTURE_REQUEST_DIR")
+        if capture_dir and self.request_index == 1:
+            import torch
+            destination = Path(capture_dir)
+            destination.mkdir(parents=True, exist_ok=True)
+            torch.save(request, destination / f"request-{self.noise_seed}.pt")
 
         actions = self.client(**request)
         actions = actions[0, :, :ACTION_DIM].float().cpu().numpy()
@@ -215,6 +226,7 @@ def evaluate_task(
     env = gym.make(f"robocasa/{env_name}", split=args.split, seed=args.seed)
     horizon = args.horizon if args.horizon is not None else get_task_horizon(env_name)
     episode_results = []
+    video_writer = None
 
     episodes = range(args.num_trials) if episode_indices is None else episode_indices
     try:
@@ -222,6 +234,8 @@ def evaluate_task(
             global_episode_index = task_index * args.num_trials + episode
             episode_seed = args.seed + global_episode_index
             observation, _ = reset_env(env, episode_seed)
+            client.noise_seed = episode_seed * 100000
+            client.request_index = 0
             instruction = observation["annotation.human.task_description"]
 
             queue_length = (args.obs_history - 1) * args.obs_interval + 1
@@ -234,10 +248,11 @@ def evaluate_task(
             state_queue.append(observation_to_state(observation))
 
             action_plan: collections.deque[np.ndarray] = collections.deque()
-            video_frames = []
             capture_video = args.save_videos or args.save_failure_videos
+            video_path = task_dir / f"episode_{episode:03d}_seed_{episode_seed}_partial.mp4"
             if capture_video:
-                video_frames.append(make_video_frame(observation))
+                video_writer = imageio.get_writer(video_path, fps=args.video_fps, codec="libx264", ffmpeg_params=["-threads", "1"])
+                video_writer.append_data(make_video_frame(observation))
 
             success = False
             steps = 0
@@ -266,17 +281,18 @@ def evaluate_task(
 
                 success = bool(info.get("success", False))
                 if capture_video and (steps % args.video_stride == 0 or success or done or truncated):
-                    video_frames.append(make_video_frame(observation))
+                    video_writer.append_data(make_video_frame(observation))
                 if success or done or truncated:
                     break
 
             status = "success" if success else "failure"
-            if video_frames and (args.save_videos or (args.save_failure_videos and not success)):
-                imageio.mimsave(
-                    task_dir / f"episode_{episode:03d}_seed_{episode_seed}_{status}.mp4",
-                    video_frames,
-                    fps=args.video_fps,
-                )
+            if video_writer is not None:
+                video_writer.close()
+                video_writer = None
+                if args.save_videos or (args.save_failure_videos and not success):
+                    video_path.replace(task_dir / f"episode_{episode:03d}_seed_{episode_seed}_{status}.mp4")
+                else:
+                    video_path.unlink()
 
             episode_results.append(
                 {
@@ -303,6 +319,8 @@ def evaluate_task(
 
         return stats
     finally:
+        if video_writer is not None:
+            video_writer.close()
         env.close()
 
 

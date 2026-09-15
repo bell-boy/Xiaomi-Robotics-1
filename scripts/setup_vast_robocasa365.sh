@@ -1,0 +1,29 @@
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+mkdir -p /workspace/checkpoints
+apt-get update
+apt-get install -y git rsync libegl1 libgl1 libgles2 libopengl0 libosmesa6 libglfw3 ffmpeg tmux
+python -m pip install transformers==4.57.1 torchvision==0.23.0 accelerate einops scipy tyro 'imageio[ffmpeg]' pytest nvidia-ml-py
+python -m pip install 'https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl'
+hf download XiaomiRobotics/Xiaomi-Robotics-1-RoboCasa365 --revision 3a6d0293bfa90759d34a7fc48c2c62413cd7bcf4 --local-dir /workspace/checkpoints/Xiaomi-Robotics-1-RoboCasa365 > /workspace/download-365.log 2>&1 &
+pid365=$!
+hf download XiaomiRobotics/Xiaomi-Robotics-1-5B --revision ee21d524b5c52ac961d941e1bc7d6d92836c3d5e --local-dir /workspace/checkpoints/Xiaomi-Robotics-1-5B > /workspace/download-base.log 2>&1 &
+pidbase=$!
+conda create -y -n robocasa365 --override-channels -c conda-forge python=3.11 pip
+SIM_PY=/opt/conda/envs/robocasa365/bin/python
+git clone https://github.com/ARISE-Initiative/robosuite.git /workspace/robosuite365
+git -C /workspace/robosuite365 checkout 5ce6643f3092639d08f7b0f90ed1c6a84f50552c
+git clone https://github.com/robocasa/robocasa.git /workspace/robocasa365
+cd /workspace/robocasa365
+git checkout 4f8a2980def75a55dff96b990745b83540425f09
+$SIM_PY -m pip install -e /workspace/robosuite365 -e /workspace/robocasa365
+$SIM_PY -m pip install transformers==4.57.1 'imageio[ffmpeg]' einops
+export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa
+$SIM_PY -m robocasa.scripts.setup_macros
+$SIM_PY -c 'import builtins; builtins.input=lambda *a:"y"; from robocasa.scripts.download_kitchen_assets import download_kitchen_assets; download_kitchen_assets(None)'
+wait "$pid365"
+wait "$pidbase"
+$SIM_PY -m pip freeze > /workspace/simulator-requirements.txt
+python -m pip freeze > /workspace/deployment-requirements.txt
+git -C /workspace/robosuite365 rev-parse HEAD > /workspace/robosuite-revision.txt
+touch /workspace/SETUP-DONE

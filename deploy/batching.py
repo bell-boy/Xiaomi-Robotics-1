@@ -16,7 +16,9 @@ def collate(requests, pad_token_id):
             F.pad(r[key], (length - r[key].shape[1], 0),
                   value=pad_token_id if key == "input_ids" else 0)
             for r in requests], dim=0)
-    for key in ("pixel_values", "image_grid_thw", "state", "action_mask"):
+    for key in ("pixel_values", "image_grid_thw", "pixel_values_videos", "video_grid_thw", "state", "action_mask"):
+        if key not in requests[0]:
+            continue
         batch[key] = torch.cat([r[key] for r in requests], dim=0)
     return batch
 
@@ -43,17 +45,22 @@ class XR1BatchPolicy:
         self.pad_token_id = self.processor.tokenizer.pad_token_id
         if self.pad_token_id is None:
             self.pad_token_id = self.processor.tokenizer.eos_token_id
-        self.action_shape = tuple(self.processor.get_action_mask("robocasa_mg").shape[1:])
+        robot_types = self.processor.list_robot_types()
+        self.robot_type = "robocasa365" if "robocasa365" in robot_types else "robocasa_mg"
+        self.visual_keys = ("pixel_values_videos", "video_grid_thw") if self.robot_type == "robocasa365" else ("pixel_values", "image_grid_thw")
+        self.required = (REQUIRED - {"pixel_values", "image_grid_thw"}) | set(self.visual_keys)
+        self.action_shape = tuple(self.processor.get_action_mask(self.robot_type).shape[1:])
         self.state_dim = self.model.config.state_dim
+        self.state_shape = (1, 4 if self.robot_type == "robocasa365" else 1, self.state_dim)
 
     def validate(self, data):
-        if not isinstance(data, dict) or set(data) != REQUIRED:
-            raise ValueError(f"Expected fields: {sorted(REQUIRED)}")
-        if data["task_id"] != "robocasa_mg":
-            raise ValueError("This batched policy serves robocasa_mg")
+        if not isinstance(data, dict) or set(data) != self.required:
+            raise ValueError(f"Expected fields: {sorted(self.required)}")
+        if data["task_id"] != self.robot_type:
+            raise ValueError(f"This batched policy serves {self.robot_type}")
         if not isinstance(data["seed"], int) or not 0 <= data["seed"] < 2**63:
             raise ValueError("seed must be a nonnegative 63-bit integer")
-        for key in REQUIRED - {"task_id", "seed"}:
+        for key in self.required - {"task_id", "seed"}:
             if not isinstance(data[key], torch.Tensor) or data[key].device.type != "cpu":
                 raise ValueError(f"{key} must be a CPU tensor")
         if data["input_ids"].ndim != 2 or data["input_ids"].shape[0] != 1:
@@ -62,11 +69,11 @@ class XR1BatchPolicy:
             raise ValueError("Invalid text length")
         if data["attention_mask"].shape != data["input_ids"].shape:
             raise ValueError("attention_mask must match input_ids")
-        if data["state"].shape != (1, 1, self.state_dim):
+        if tuple(data["state"].shape) != self.state_shape:
             raise ValueError("Unexpected state shape")
         if tuple(data["action_mask"].shape) != (1, *self.action_shape):
             raise ValueError("Unexpected action_mask shape")
-        if data["image_grid_thw"].shape != (3, 3) or data["pixel_values"].ndim != 2:
+        if data[self.visual_keys[1]].shape != (3, 3) or data[self.visual_keys[0]].ndim != 2:
             raise ValueError("Expected three RoboCasa camera images")
 
     @torch.inference_mode()
@@ -93,6 +100,7 @@ class XR1BatchPolicy:
         positions = (torch.arange(query_length, device=action_mask.device)
                      .view(1, 1, -1).repeat(3, bs, 1)
                      + vlm.position_ids.max(dim=-1)[0][..., None] + 1)
+        positions[:, :, -action_length:] += int(getattr(model.config, "inference_action_position_offset", 0))
         position_embeds = model.rotary_emb(action_mask, positions)
         dit_mask = torch.tril(torch.ones((bs, query_length, query_length), device=action_mask.device))
         cache_mask = vlm.attention_mask[:, None, :].expand(-1, query_length, -1)
