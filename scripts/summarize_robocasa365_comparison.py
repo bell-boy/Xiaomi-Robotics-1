@@ -41,9 +41,11 @@ def main():
     p.add_argument('--base', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--trials', type=int, default=50)
+    p.add_argument('--groups', nargs='+', choices=['atomic_seen', 'composite_seen', 'composite_unseen'], default=['atomic_seen', 'composite_seen', 'composite_unseen'])
     p.add_argument('--drive-url', default='https://drive.google.com/drive/folders/148F8BQ-VHRUCXo6EGJOKRAV5QQTwZIDZ')
     args = p.parse_args()
     groups = json.loads((ROOT/'eval_robocasa365/target_task_groups.json').read_text())
+    groups = {name: groups[name] for name in args.groups}
     tasks = [task for group in groups.values() for task in group]
     trained, trained_videos = load_run(args.trained, tasks, args.trials)
     base, base_videos = load_run(args.base, tasks, args.trials)

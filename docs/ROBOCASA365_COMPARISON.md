@@ -1,5 +1,11 @@
 # Four-GPU RoboCasa365 comparison
 
+Current requested run: **atomic-seen only, 10 episodes per task per policy**
+(18 tasks, 180 episodes per policy, 360 total), on the held-out `target` split.
+The scripts also support the full 50-task/50-episode protocol documented below.
+For this exploratory run, add `--task-set atomic_seen --num-trials 10` to each
+launcher command and `--groups atomic_seen --trials 10` to the summary command.
+
 This evaluation compares the released RoboCasa365-trained checkpoint with general
 XR-1-5B inference weights, without performing fine-tuning. The base weights need
 an explicit RoboCasa365 input/output adapter; the comparison must disclose use
@@ -51,7 +57,8 @@ Transformers 4.57.1 and Flash Attention 2 for deployment.
 python scripts/launch_robocasa365_batched.py \
   --model /workspace/checkpoints/Xiaomi-Robotics-1-RoboCasa365 \
   --output /workspace/evaluations/robocasa365-trained \
-  --gpus 0 1 2 3 --workers-per-gpu 8 --max-batch-size 16 --batch-wait-ms 20
+  --gpus 0 1 2 3 --workers-per-gpu 8 --max-batch-size 16 --batch-wait-ms 20 \
+  --task-set atomic_seen --num-trials 10 --split target
 
 python scripts/convert_base_robocasa365.py \
   --base-weights /workspace/checkpoints/Xiaomi-Robotics-1-5B/model_states.pt \
@@ -61,7 +68,8 @@ python scripts/convert_base_robocasa365.py \
 python scripts/launch_robocasa365_batched.py \
   --model /workspace/checkpoints/XR1-5B-zero-shot-365-adapter \
   --output /workspace/evaluations/base-5b-no-finetuning \
-  --gpus 0 1 2 3 --workers-per-gpu 8 --max-batch-size 16 --batch-wait-ms 20
+  --gpus 0 1 2 3 --workers-per-gpu 8 --max-batch-size 16 --batch-wait-ms 20 \
+  --task-set atomic_seen --num-trials 10 --split target
 ```
 
 Run sequentially so each evaluation uses all four GPUs. The launcher starts and
@@ -81,7 +89,7 @@ that GPU. Captured tensors are diagnostics, not committed evaluation data.
 python scripts/summarize_robocasa365_comparison.py \
   --trained /workspace/evaluations/robocasa365-trained \
   --base /workspace/evaluations/base-5b-no-finetuning \
-  --output /workspace/evaluations/comparison
+  --output /workspace/evaluations/comparison --groups atomic_seen --trials 10
 ```
 
 The summary refuses incomplete runs, missing/duplicate episodes, unpaired seeds

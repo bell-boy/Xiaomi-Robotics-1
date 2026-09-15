@@ -27,7 +27,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--model', required=True)
     p.add_argument('--output', type=Path, required=True)
-    p.add_argument('--sim-python', default='/opt/conda/envs/robocasa365/bin/python')
+    p.add_argument('--sim-python', default='/workspace/robocasa365-eval-venv/bin/python')
     p.add_argument('--gpus', type=int, nargs='+', default=[0, 1, 2, 3])
     p.add_argument('--workers-per-gpu', type=int, default=8)
     p.add_argument('--max-batch-size', type=int, default=16)
@@ -35,6 +35,7 @@ def main():
     p.add_argument('--base-port', type=int, default=10086)
     p.add_argument('--num-trials', type=int, default=50)
     p.add_argument('--split', choices=['pretrain', 'target'], default='target')
+    p.add_argument('--task-set', choices=['target50', 'atomic_seen', 'composite_seen', 'composite_unseen'], default='target50')
     p.add_argument('--task-name', action='append')
     p.add_argument('--horizon', type=int)
     args = p.parse_args()
@@ -48,7 +49,7 @@ def main():
                TOKENIZERS_PARALLELISM='false', MUJOCO_GL='osmesa', PYOPENGL_PLATFORM='osmesa', LP_NUM_THREADS='1')
     command = [args.sim_python, '-u', 'eval_robocasa365/dynamic_eval.py', 'init', '--queue-dir', str(queue), '--',
                '--model-path', args.model, '--save-root-dir', str(args.output), '--run-id', 'results',
-               '--split', args.split, '--task-set', 'target50', '--num-trials', str(args.num_trials),
+               '--split', args.split, '--task-set', args.task_set, '--num-trials', str(args.num_trials),
                '--replan-steps', '16', '--obs-history', '4', '--obs-interval', '2', '--seed', '7',
                '--crop-ratio', '0.95', '--save-videos', '--video-stride', '2', '--video-fps', '20']
     for task in args.task_name or []:

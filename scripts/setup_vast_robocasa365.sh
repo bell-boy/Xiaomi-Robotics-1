@@ -9,15 +9,16 @@ hf download XiaomiRobotics/Xiaomi-Robotics-1-RoboCasa365 --revision 3a6d0293bfa9
 pid365=$!
 hf download XiaomiRobotics/Xiaomi-Robotics-1-5B --revision ee21d524b5c52ac961d941e1bc7d6d92836c3d5e --local-dir /workspace/checkpoints/Xiaomi-Robotics-1-5B > /workspace/download-base.log 2>&1 &
 pidbase=$!
-conda create -y -n robocasa365 --override-channels -c conda-forge python=3.11 pip
-SIM_PY=/opt/conda/envs/robocasa365/bin/python
+python -m venv --system-site-packages /workspace/robocasa365-eval-venv
+SIM_PY=/workspace/robocasa365-eval-venv/bin/python
 git clone https://github.com/ARISE-Initiative/robosuite.git /workspace/robosuite365
 git -C /workspace/robosuite365 checkout 5ce6643f3092639d08f7b0f90ed1c6a84f50552c
 git clone https://github.com/robocasa/robocasa.git /workspace/robocasa365
 cd /workspace/robocasa365
 git checkout 4f8a2980def75a55dff96b990745b83540425f09
-$SIM_PY -m pip install -e /workspace/robosuite365 -e /workspace/robocasa365
-$SIM_PY -m pip install transformers==4.57.1 'imageio[ffmpeg]' einops
+$SIM_PY -m pip install -e /workspace/robosuite365 numpy==2.2.5 numba==0.61.2 scipy==1.15.3 mujoco==3.3.1 pygame Pillow opencv-python pyyaml pynput tqdm termcolor imageio h5py lxml hidapi gymnasium==0.29.1
+# The simulator uses runtime dependencies only; lerobot/tianshou training stacks are unnecessary.
+$SIM_PY -m pip install --no-deps -e /workspace/robocasa365
 export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa
 $SIM_PY -m robocasa.scripts.setup_macros
 $SIM_PY -c 'import builtins; builtins.input=lambda *a:"y"; from robocasa.scripts.download_kitchen_assets import download_kitchen_assets; download_kitchen_assets(None)'
