@@ -1,5 +1,6 @@
 """RoboCasa XR-1 collation and per-request deterministic action sampling."""
 import torch
+import time
 import torch.nn.functional as F
 
 REQUIRED = {"input_ids", "attention_mask", "pixel_values", "image_grid_thw",
@@ -30,7 +31,9 @@ def seeded_noise(action_mask, seeds):
 
 
 class XR1BatchPolicy:
-    def __init__(self, model_path):
+    def __init__(self, model_path, profile=False):
+        self.profile = profile
+        self.last_metrics = {}
         from transformers import AutoModel, AutoProcessor
         self.model = AutoModel.from_pretrained(
             model_path, trust_remote_code=True, attn_implementation="flash_attention_2",
@@ -68,13 +71,23 @@ class XR1BatchPolicy:
 
     @torch.inference_mode()
     def __call__(self, requests):
+        started = time.monotonic()
         batch = collate(requests, self.pad_token_id)
+        collated = time.monotonic()
+        events = [torch.cuda.Event(enable_timing=True) for _ in range(5)] if self.profile else None
+        if events:
+            events[0].record()
         batch = {k: v.to(device=self.model.device,
                         dtype=self.model.dtype if v.is_floating_point() else v.dtype)
                  for k, v in batch.items()}
+        transferred = time.monotonic()
+        if events:
+            events[1].record()
         state, action_mask = batch.pop("state"), batch.pop("action_mask")
         model = self.model
         vlm = model.vlm(**batch, use_cache=True)
+        if events:
+            events[2].record()
         bs, action_length, _ = action_mask.shape
         query_length = action_length + state.shape[1] + 1
         positions = (torch.arange(query_length, device=action_mask.device)
@@ -93,5 +106,17 @@ class XR1BatchPolicy:
                 noisy_action=x, t=t, action_mask=action_mask,
                 state_embed=state_embed, position_embeds=position_embeds,
                 past_key_values=vlm.past_key_values, attn_mask=attn_mask) / 5
+        if events:
+            events[3].record()
         actions = x.cpu()
+        if events:
+            events[4].record()
+            events[4].synchronize()
+            self.last_metrics = dict(
+                collate_ms=(collated-started)*1000,
+                h2d_wall_ms=(transferred-collated)*1000,
+                h2d_stream_ms=events[0].elapsed_time(events[1]),
+                vlm_stream_ms=events[1].elapsed_time(events[2]),
+                action_head_stream_ms=events[2].elapsed_time(events[3]),
+                d2h_stream_ms=events[3].elapsed_time(events[4]))
         return list(actions.split(1, dim=0))
