@@ -3,8 +3,28 @@
 Current requested run: **atomic-seen only, 10 episodes per task per policy**
 (18 tasks, 180 episodes per policy, 360 total), on the held-out `target` split.
 The scripts also support the full 50-task/50-episode protocol documented below.
-For this exploratory run, add `--task-set atomic_seen --num-trials 10` to each
-launcher command and `--groups atomic_seen --trials 10` to the summary command.
+
+## Changing the number of episodes per task
+
+`scripts/run_robocasa365_comparison.py` runs the whole paired comparison and
+takes the episode count once:
+
+```bash
+python scripts/run_robocasa365_comparison.py --episodes-per-task 10 --task-set atomic_seen
+```
+
+It runs the trained-policy evaluation, converts the base weights with the
+RoboCasa365 adapter, runs the base-policy evaluation, and writes the paired
+summary, all with the same `--num-trials`/`--trials`. The run directory defaults
+to `/workspace/evaluations/<task set>-<episodes per task>`, so a different count
+never reuses or overwrites an earlier run. `--policies trained` runs only the
+trained policy, `--dry-run` prints the stages without running them, and
+`--force` replaces an existing run directory for the same tag.
+
+When driving the scripts by hand instead, pass the same count to both commands:
+`--num-trials <n>` to each launcher and `--trials <n>` to the summary. The
+summary also reads `run-config.json` from each run, so omitting `--trials`
+already picks up the episode count that the launcher recorded.
 
 This evaluation compares the released RoboCasa365-trained checkpoint with general
 XR-1-5B inference weights, without performing fine-tuning. The base weights need
@@ -54,6 +74,11 @@ current RoboCasa/robosuite versions; see the official installation guide. Use
 Transformers 4.57.1 and Flash Attention 2 for deployment.
 
 ```bash
+python scripts/run_robocasa365_comparison.py \
+  --episodes-per-task 10 --task-set atomic_seen --split target \
+  --gpus 0 1 2 3 --workers-per-gpu 8 --max-batch-size 16 --batch-wait-ms 20
+
+# Equivalent by hand:
 python scripts/launch_robocasa365_batched.py \
   --model /workspace/checkpoints/Xiaomi-Robotics-1-RoboCasa365 \
   --output /workspace/evaluations/robocasa365-trained \
@@ -89,8 +114,11 @@ that GPU. Captured tensors are diagnostics, not committed evaluation data.
 python scripts/summarize_robocasa365_comparison.py \
   --trained /workspace/evaluations/robocasa365-trained \
   --base /workspace/evaluations/base-5b-no-finetuning \
-  --output /workspace/evaluations/comparison --groups atomic_seen --trials 10
+  --output /workspace/evaluations/comparison --groups atomic_seen
 ```
+
+`--trials` is optional: without it the summary uses the episode count recorded
+in each run's `run-config.json`, so the reported counts always match what ran.
 
 The summary refuses incomplete runs, missing/duplicate episodes, unpaired seeds
 and missing videos. It writes SUMMARY.md, tasks.csv and comparison.json, including

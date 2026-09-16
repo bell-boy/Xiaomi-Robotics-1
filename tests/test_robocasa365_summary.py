@@ -10,6 +10,30 @@ spec.loader.exec_module(comparison)
 
 
 class TestComparisonCoverage(unittest.TestCase):
+    def test_episodes_per_task_comes_from_run_config(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p/'DONE').touch()
+            (p/'run-config.json').write_text(json.dumps({'num_trials': 3}))
+            (p/'results').mkdir()
+            (p/'results/summary.json').write_text(json.dumps({'tasks': {'Task': {
+                'num_episodes': 3, 'episodes': [{'episode': 0}, {'episode': 1}]}}}))
+            self.assertEqual(comparison.configured_trials(p), 3)
+            with self.assertRaisesRegex(ValueError, 'Missing episodes'):
+                comparison.load_run(p, ['Task'])
+
+    def test_episodes_per_task_falls_back_to_the_summary(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p/'DONE').touch()
+            (p/'results').mkdir()
+            (p/'results/summary.json').write_text(json.dumps({'tasks': {'Task': {
+                'num_episodes': 2, 'episodes': [{'episode': 0, 'seed': 7, 'success': True},
+                                                {'episode': 1, 'seed': 8, 'success': False}]}}}))
+            self.assertIsNone(comparison.configured_trials(p))
+            with self.assertRaisesRegex(ValueError, 'Missing video'):
+                comparison.load_run(p, ['Task'])
+
     def test_incomplete_run_is_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(ValueError):

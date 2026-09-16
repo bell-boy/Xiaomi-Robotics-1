@@ -9,12 +9,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load_run(path, expected_tasks, trials):
+def configured_trials(path):
+    """Episodes per task recorded by the launcher, if this run has a config."""
+    config = path/'run-config.json'
+    if not config.is_file():
+        return None
+    value = json.loads(config.read_text()).get('num_trials')
+    return int(value) if value is not None else None
+
+
+def load_run(path, expected_tasks, trials=None):
     if not (path/'DONE').exists():
         raise ValueError(f'Run is not complete: {path}')
     summary = json.loads((path/'results/summary.json').read_text())
     if set(summary['tasks']) != set(expected_tasks):
         raise ValueError('Task coverage mismatch')
+    if trials is None:
+        trials = configured_trials(path)
+        if trials is None:
+            trials = {task['num_episodes'] for task in summary['tasks'].values()}
+            if len(trials) != 1:
+                raise ValueError(f'Cannot infer episodes per task: {sorted(trials)}')
+            trials = trials.pop()
     videos = []
     for name, task in summary['tasks'].items():
         if task['num_episodes'] != trials or len(task['episodes']) != trials:
@@ -40,7 +56,8 @@ def main():
     p.add_argument('--trained', type=Path, required=True)
     p.add_argument('--base', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
-    p.add_argument('--trials', type=int, default=50)
+    p.add_argument('--trials', type=int, default=None,
+                   help='Episodes per task. Defaults to the value recorded in each run-config.json.')
     p.add_argument('--groups', nargs='+', choices=['atomic_seen', 'composite_seen', 'composite_unseen'], default=['atomic_seen', 'composite_seen', 'composite_unseen'])
     p.add_argument('--drive-url', default='https://drive.google.com/drive/folders/148F8BQ-VHRUCXo6EGJOKRAV5QQTwZIDZ')
     args = p.parse_args()
@@ -49,6 +66,13 @@ def main():
     tasks = [task for group in groups.values() for task in group]
     trained, trained_videos = load_run(args.trained, tasks, args.trials)
     base, base_videos = load_run(args.base, tasks, args.trials)
+    trials = args.trials or configured_trials(args.trained) or configured_trials(args.base)
+    if trials is None:
+        counts = {task['num_episodes'] for task in list(trained['tasks'].values())+list(base['tasks'].values())}
+        if len(counts) != 1:
+            raise ValueError(f'Runs disagree on episodes per task: {sorted(counts)}')
+        trials = counts.pop()
+    args.trials = trials
     for name in tasks:
         a = sorted(trained['tasks'][name]['episodes'], key=lambda r:r['episode'])
         b = sorted(base['tasks'][name]['episodes'], key=lambda r:r['episode'])
