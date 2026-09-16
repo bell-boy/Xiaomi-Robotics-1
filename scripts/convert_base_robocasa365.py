@@ -33,12 +33,25 @@ def partition_keys(base_keys, expected_keys):
     return dict(training_only=training_only, base_only=base_only, unexpected=unexpected, missing=missing)
 
 
-def tied_keys(model):
-    """Parameter names that share storage with another parameter, such as a tied lm_head."""
-    groups = {}
-    for name, param in model.named_parameters():
-        groups.setdefault(id(param), []).append(name)
-    return {name for names in groups.values() if len(names) > 1 for name in names}
+def tied_keys(loaded, saved_keys):
+    """Loaded tensors that a saved tensor already reproduces exactly.
+
+    ``save_pretrained`` stores one copy of a tied weight, so a tied lm_head is
+    absent from the shards. In-memory tying is not enough to detect it: the
+    checkpoint's own lm_head is the value the runtime ties to the token
+    embedding, so an identical saved tensor of the same shape is what makes the
+    omitted key redundant. The reload check below proves the artifact.
+    """
+    by_shape = {}
+    for name in saved_keys:
+        by_shape.setdefault(tuple(loaded[name].shape), []).append(name)
+    tied = set()
+    for name in set(loaded)-set(saved_keys):
+        for other in by_shape.get(tuple(loaded[name].shape), []):
+            if torch.equal(loaded[name], loaded[other]):
+                tied.add(name)
+                break
+    return tied
 
 
 def unsaved_inference_keys(loaded_keys, saved_keys, tied):
@@ -77,7 +90,6 @@ def main():
     model.load_state_dict(loaded, strict=True, assign=True)
     converted_state = model.state_dict()
     assert all(torch.equal(converted_state[k], v) for k, v in loaded.items())
-    tied = tied_keys(model)
     model.save_pretrained(args.output, safe_serialization=True, max_shard_size='4GB')
     saved_keys = set()
     for shard in args.output.glob('*.safetensors'):
@@ -88,9 +100,17 @@ def main():
                 saved_keys.add(key)
     if saved_keys-set(loaded):
         raise RuntimeError(f'Saved unrequested tensors: {sorted(saved_keys-set(loaded))}')
-    unsaved = unsaved_inference_keys(loaded, saved_keys, tied)
+    unsaved = unsaved_inference_keys(loaded, saved_keys, tied_keys(loaded, saved_keys))
     if unsaved:
         raise RuntimeError(f'Saved inference tensor coverage mismatch: {unsaved}')
+    del model, converted_state
+    reloaded = AutoModel.from_pretrained(args.output, trust_remote_code=True, dtype=torch.bfloat16)
+    reloaded_state = reloaded.state_dict()
+    unreproduced = [k for k, v in loaded.items()
+                    if k not in reloaded_state or not torch.equal(reloaded_state[k].cpu(), v.cpu())]
+    if unreproduced:
+        raise RuntimeError(f'Reloaded model does not reproduce the base weights: {unreproduced}')
+    del reloaded, reloaded_state
     digest = hashlib.sha256()
     with args.base_weights.open('rb') as f:
         for block in iter(lambda: f.read(8*1024*1024), b''):
@@ -104,6 +124,7 @@ def main():
                   omitted_base_only_keys=groups['base_only'],
                   action_position_offset=10,
                   tied_tensors_shared_with_a_saved_copy=sorted(set(loaded)-saved_keys),
+                  reloaded_from_output_and_compared=True,
                   caveat='Same RoboCasa365 processor, video history, action mask and mean/std as trained policy. General weights are unchanged. This is an adapter-based zero-shot baseline; robot action conventions may be out of distribution.')
     (args.output/'conversion-report.json').write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))
