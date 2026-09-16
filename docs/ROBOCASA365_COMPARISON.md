@@ -67,6 +67,14 @@ SHA-256, omitted keys, parameter count and zero training steps. Do not treat a
 failed conversion as permission to fill missing inference weights from the
 fine-tuned checkpoint.
 
+The general release holds two tensors the RoboCasa365 architecture never
+declares: `vlm.model.action_embed.weight` (60x2560) and
+`vlm.model.score_embed.weight` (1x2560). RoboCasa365 uses `action_projector` and
+`score_projector` instead, so those two are unused here. The conversion names
+them explicitly, records them under `omitted_base_only_keys`, and still fails on
+any other unrecognized tensor. Everything the adapter loads comes from the base
+weights unchanged.
+
 ## Launch
 
 The deployment and simulator environments are separate. The simulator needs the

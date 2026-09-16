@@ -15,6 +15,23 @@ import torch
 from safetensors import safe_open
 from transformers import AutoConfig, AutoModel
 
+TRAINING_ONLY_PREFIXES = ('state_projector_choice.', 'action_projector_choice.', 'score_projector_choice.')
+# The general release also carries a small action-token embedding and a scalar
+# score embedding inside the VLM namespace. The RoboCasa365 architecture uses
+# action_projector/score_projector instead and declares neither tensor, so they
+# stay unused here. They are named explicitly rather than matched by prefix.
+BASE_ONLY_TENSORS = ('vlm.model.action_embed.weight', 'vlm.model.score_embed.weight')
+
+
+def partition_keys(base_keys, expected_keys):
+    """Split base-checkpoint keys into unused, unexpected and missing groups."""
+    extra = set(base_keys)-set(expected_keys)
+    training_only = sorted(k for k in extra if k.startswith(TRAINING_ONLY_PREFIXES))
+    base_only = sorted(k for k in extra if k in BASE_ONLY_TENSORS)
+    unexpected = sorted(extra-set(training_only)-set(base_only))
+    missing = sorted(set(expected_keys)-set(base_keys))
+    return dict(training_only=training_only, base_only=base_only, unexpected=unexpected, missing=missing)
+
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -36,13 +53,13 @@ def main():
     state = checkpoint.get('module', checkpoint)
     state = {k.removeprefix('model.'): v for k, v in state.items()}
     expected = model.state_dict()
-    allowed_extra = ('state_projector_choice.', 'action_projector_choice.', 'score_projector_choice.')
-    extra = set(state)-set(expected)
-    missing = set(expected)-set(state)
-    unexpected = [k for k in extra if not k.startswith(allowed_extra)]
+    groups = partition_keys(state, expected)
+    missing, unexpected = groups['missing'], groups['unexpected']
     mismatched = {k: [list(state[k].shape), list(v.shape)] for k, v in expected.items() if k in state and state[k].shape != v.shape}
     if missing or unexpected or mismatched:
         raise RuntimeError(dict(missing=sorted(missing), unexpected=sorted(unexpected), mismatched=mismatched))
+    if groups['base_only'] != sorted(BASE_ONLY_TENSORS):
+        raise RuntimeError(f'Base-only tensor set changed: {groups["base_only"]}')
     loaded = {k: state[k] for k in expected}
     model.load_state_dict(loaded, strict=True, assign=True)
     converted_state = model.state_dict()
@@ -65,7 +82,9 @@ def main():
                   adapter_revision='3a6d0293bfa90759d34a7fc48c2c62413cd7bcf4',
                   source_sha256=digest.hexdigest(), training_steps=0,
                   inference_parameters=sum(v.numel() for v in loaded.values()),
-                  all_inference_tensors_unchanged=True, omitted_training_only_keys=sorted(extra),
+                  all_inference_tensors_unchanged=True,
+                  omitted_training_only_keys=groups['training_only'],
+                  omitted_base_only_keys=groups['base_only'],
                   action_position_offset=10,
                   caveat='Same RoboCasa365 processor, video history, action mask and mean/std as trained policy. General weights are unchanged. This is an adapter-based zero-shot baseline; robot action conventions may be out of distribution.')
     (args.output/'conversion-report.json').write_text(json.dumps(report, indent=2))
