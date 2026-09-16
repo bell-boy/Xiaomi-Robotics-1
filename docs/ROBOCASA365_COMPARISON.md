@@ -40,8 +40,8 @@ It is an adapter-based zero-shot baseline, not a native published base benchmark
 - Current official horizons; observation history 4, interval 2, 16 actions/query,
   center crop 0.95. No shortened horizons in the full evaluation.
 - Four GPU servers, one model instance per GPU, maximum batch 16, wait 20 ms.
-- Independent environments sharing a rollout queue. Initial concurrency is eight
-  OSMesa workers per GPU; validate host memory and throughput before changing it.
+- Independent environments sharing a rollout queue. Concurrency is the per-GPU
+  worker count; see the sizing note below before changing it.
 - Per-request seeded noise depends on episode seed and request index, never GPU
   assignment or batch ordering. This differs from the original persistent
   server-global RNG stream, and is used for both policies.
@@ -51,6 +51,26 @@ It is an adapter-based zero-shot baseline, not a native published base benchmark
 The prior RoboCasa v0.2 tuning is not a RoboCasa365 throughput measurement.
 RoboCasa365 has video-history inputs, a different action representation and
 renders observations each simulation step. Recheck memory and throughput.
+
+## Simulator concurrency
+
+Worker count, not batch size, was the throughput limit in this evaluation. At
+eight OSMesa workers per GPU the servers reported batch size 1 for 93% of
+requests, the GPUs idled between 0 and 25% utilization, and one policy's 180
+atomic-seen episodes took 15.5 minutes.
+
+Raising the same configuration to 32 workers per GPU (128 simulators) cut the
+modal batch-size share to 58% and finished the same policy in about nine
+minutes; a mid-run sample measured 37.7 episodes/min against 11.6 before.
+Episode success rate moved by 1.1 points (141/180 to 139/180) between the two
+concurrencies, which is the batch-composition numerical difference described in
+the protocol, not a change in the policy.
+
+Size the host from these per-simulator figures, measured on the RoboCasa365
+task set: about 1 CPU core and 5.5 GB of private memory per environment, plus
+roughly 11 GB of GPU memory per model server. The 32-worker-per-GPU run used
+about 620 GB of RAM with no swap on a 1 TB host, and left the GPUs at moderate
+utilization.
 
 ## Checkpoints
 
