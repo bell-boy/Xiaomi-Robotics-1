@@ -54,6 +54,34 @@ renders observations each simulation step. Recheck memory and throughput.
 
 ## Checkpoints
 
+### Download throughput
+
+Setup is dominated by ~35 GB of checkpoints and ~22 GB of asset archives, so the
+rented host's link matters more than anything else. When searching offers, filter
+on `inet_down>=2000` and keep host reliability (`R`) at 99 or better; a slow host
+cost hours where a fast one took minutes for identical commands.
+
+Bandwidth alone is not enough, because single connections are capped well below
+the link. Three settings in `scripts/setup_vast_robocasa365.sh` handle that:
+
+- `HF_HUB_ENABLE_HF_TRANSFER=1` with `hf_transfer` installed, so each checkpoint
+  file is fetched over parallel ranges instead of one stream.
+- `scripts/download_robocasa365_assets.py` replaces RoboCasa's one-archive-at-a-time
+  downloader. It pulls the same registry over 16 MB ranges, resumes per block,
+  checks each ZIP's CRC, and refuses entries that escape the destination.
+- `scripts/download_parallel.py` is the generic helper underneath, usable on its
+  own for any URL: `--sha256` verifies after assembly, `--manifest` fetches
+  several files at once.
+
+Completed blocks are kept on disk, so an interrupted transfer resumes rather
+than starting over. Four archives arrived at roughly 30 MB/s per stream even on
+a 13 Gb/s host, which is what the parallel ranges exist to work around.
+
+Rented volumes are not a reliable cache: capacity in the datacenters that offer
+them is thin and often unavailable when a box is recreated. Keep reusable
+artifacts (converted base weights, evaluation data) in a Hugging Face repo or
+Drive instead, and expect a fresh box to re-download from the public sources.
+
 - Trained: `XiaomiRobotics/Xiaomi-Robotics-1-RoboCasa365`, revision
   `3a6d0293bfa90759d34a7fc48c2c62413cd7bcf4`.
 - Base: `XiaomiRobotics/Xiaomi-Robotics-1-5B`, revision

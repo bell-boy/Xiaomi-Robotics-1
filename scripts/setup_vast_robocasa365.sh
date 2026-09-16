@@ -1,9 +1,14 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+# hf_transfer fetches each checkpoint file over many parallel ranges. Without
+# it a 10 GB shard arrives over one connection, which is far below the host's
+# link speed. Keep the HF cache so an interrupted download resumes.
+export HF_HUB_ENABLE_HF_TRANSFER=1
 mkdir -p /workspace/checkpoints
 apt-get update
 apt-get install -y git rsync libegl1 libgl1 libgles2 libopengl0 libosmesa6 libglfw3 ffmpeg tmux
-python -m pip install transformers==4.57.1 torchvision==0.23.0 accelerate einops scipy tyro 'imageio[ffmpeg]' pytest nvidia-ml-py
+python -m pip install transformers==4.57.1 torchvision==0.23.0 accelerate einops scipy tyro 'imageio[ffmpeg]' pytest nvidia-ml-py 'huggingface_hub[cli]' hf_transfer
 python -m pip install 'https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl'
 hf download XiaomiRobotics/Xiaomi-Robotics-1-RoboCasa365 --revision 3a6d0293bfa90759d34a7fc48c2c62413cd7bcf4 --local-dir /workspace/checkpoints/Xiaomi-Robotics-1-RoboCasa365 > /workspace/download-365.log 2>&1 &
 pid365=$!
@@ -21,7 +26,8 @@ $SIM_PY -m pip install -e /workspace/robosuite365 numpy==2.2.5 numba==0.61.2 sci
 $SIM_PY -m pip install --no-deps -e /workspace/robocasa365
 export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa
 $SIM_PY -m robocasa.scripts.setup_macros
-$SIM_PY -c 'import builtins; builtins.input=lambda *a:"y"; from robocasa.scripts.download_kitchen_assets import download_kitchen_assets; download_kitchen_assets(None)'
+# Parallel, resumable, CRC-checked asset fetch instead of RoboCasa's one-at-a-time loop.
+$SIM_PY "$REPO_ROOT/scripts/download_robocasa365_assets.py" --root /workspace/asset-downloads
 wait "$pid365"
 wait "$pidbase"
 $SIM_PY -m pip freeze > /workspace/simulator-requirements.txt
