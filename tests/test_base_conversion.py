@@ -41,6 +41,11 @@ class TestKeyPartition(unittest.TestCase):
         groups = self.conversion.partition_keys([], ['vlm.model.language_model.embed_tokens.weight'])
         self.assertEqual(groups['missing'], ['vlm.model.language_model.embed_tokens.weight'])
 
+    def test_tied_tensor_need_not_be_saved(self):
+        loaded = ['a', 'lm_head.weight']
+        self.assertEqual(self.conversion.unsaved_inference_keys(loaded, ['a'], {'lm_head.weight'}), [])
+        self.assertEqual(self.conversion.unsaved_inference_keys(loaded, ['a'], set()), ['lm_head.weight'])
+
 
 if __name__ == '__main__':
     unittest.main()

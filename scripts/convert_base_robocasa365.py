@@ -33,6 +33,19 @@ def partition_keys(base_keys, expected_keys):
     return dict(training_only=training_only, base_only=base_only, unexpected=unexpected, missing=missing)
 
 
+def tied_keys(model):
+    """Parameter names that share storage with another parameter, such as a tied lm_head."""
+    groups = {}
+    for name, param in model.named_parameters():
+        groups.setdefault(id(param), []).append(name)
+    return {name for names in groups.values() if len(names) > 1 for name in names}
+
+
+def unsaved_inference_keys(loaded_keys, saved_keys, tied):
+    """Loaded tensors that the saved shards must still contain."""
+    return sorted(set(loaded_keys)-set(saved_keys)-set(tied))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--base-weights', type=Path, required=True)
@@ -64,6 +77,7 @@ def main():
     model.load_state_dict(loaded, strict=True, assign=True)
     converted_state = model.state_dict()
     assert all(torch.equal(converted_state[k], v) for k, v in loaded.items())
+    tied = tied_keys(model)
     model.save_pretrained(args.output, safe_serialization=True, max_shard_size='4GB')
     saved_keys = set()
     for shard in args.output.glob('*.safetensors'):
@@ -72,8 +86,11 @@ def main():
                 if not torch.equal(f.get_tensor(key), loaded[key]):
                     raise RuntimeError(f'Saved tensor changed: {key}')
                 saved_keys.add(key)
-    if saved_keys != set(loaded):
-        raise RuntimeError('Saved inference tensor coverage mismatch')
+    if saved_keys-set(loaded):
+        raise RuntimeError(f'Saved unrequested tensors: {sorted(saved_keys-set(loaded))}')
+    unsaved = unsaved_inference_keys(loaded, saved_keys, tied)
+    if unsaved:
+        raise RuntimeError(f'Saved inference tensor coverage mismatch: {unsaved}')
     digest = hashlib.sha256()
     with args.base_weights.open('rb') as f:
         for block in iter(lambda: f.read(8*1024*1024), b''):
@@ -86,6 +103,7 @@ def main():
                   omitted_training_only_keys=groups['training_only'],
                   omitted_base_only_keys=groups['base_only'],
                   action_position_offset=10,
+                  tied_tensors_shared_with_a_saved_copy=sorted(set(loaded)-saved_keys),
                   caveat='Same RoboCasa365 processor, video history, action mask and mean/std as trained policy. General weights are unchanged. This is an adapter-based zero-shot baseline; robot action conventions may be out of distribution.')
     (args.output/'conversion-report.json').write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))
